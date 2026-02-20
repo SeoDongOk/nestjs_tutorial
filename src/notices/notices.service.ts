@@ -1,21 +1,22 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNoticeDto } from './dto/create-notice.dto';
 import { UpdateNoticeDto } from './dto/update-notice.dto';
+import { Role } from '@prisma/client';
 
 @Injectable()
 export class NoticesService {
   constructor(private prisma: PrismaService) {}
 
-  // 공지사항 생성
-  async create(createNoticeDto: CreateNoticeDto) {
-    // TODO: 나중에 JWT에서 userId 가져올 예정
-    const tempUserId = 1; // 임시로 하드코딩
-
+  async create(createNoticeDto: CreateNoticeDto, userId: number) {
     return this.prisma.notice.create({
       data: {
         ...createNoticeDto,
-        authorId: tempUserId,
+        authorId: userId,
       },
       include: {
         author: {
@@ -29,7 +30,6 @@ export class NoticesService {
     });
   }
 
-  // 공지사항 목록 조회 (페이징)
   async findAll(page: number = 1, limit: number = 10) {
     const skip = (page - 1) * limit;
 
@@ -37,10 +37,7 @@ export class NoticesService {
       this.prisma.notice.findMany({
         skip,
         take: limit,
-        orderBy: [
-          { isPinned: 'desc' }, // 고정 공지 먼저
-          { createdAt: 'desc' }, // 최신순
-        ],
+        orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }],
         include: {
           author: {
             select: {
@@ -65,7 +62,6 @@ export class NoticesService {
     };
   }
 
-  // 공지사항 상세 조회 (조회수 증가)
   async findOne(id: number) {
     const notice = await this.prisma.notice.findUnique({
       where: { id },
@@ -84,7 +80,6 @@ export class NoticesService {
       throw new NotFoundException(`공지사항 ID ${id}를 찾을 수 없습니다.`);
     }
 
-    // 조회수 증가
     await this.prisma.notice.update({
       where: { id },
       data: { viewCount: { increment: 1 } },
@@ -93,10 +88,18 @@ export class NoticesService {
     return notice;
   }
 
-  // 공지사항 수정
-  async update(id: number, updateNoticeDto: UpdateNoticeDto) {
-    // 공지사항 존재 확인
-    await this.findOne(id);
+  async update(
+    id: number,
+    updateNoticeDto: UpdateNoticeDto,
+    userId: number,
+    userRole: Role,
+  ) {
+    const notice = await this.findOne(id);
+
+    // 관리자는 모든 글 수정 가능
+    if (userRole !== Role.ADMIN) {
+      throw new ForbiddenException('관리자만 수정할 수 있습니다.');
+    }
 
     return this.prisma.notice.update({
       where: { id },
@@ -113,10 +116,13 @@ export class NoticesService {
     });
   }
 
-  // 공지사항 삭제
-  async remove(id: number) {
-    // 공지사항 존재 확인
-    await this.findOne(id);
+  async remove(id: number, userId: number, userRole: Role) {
+    const notice = await this.findOne(id);
+
+    // 관리자는 모든 글 삭제 가능
+    if (userRole !== Role.ADMIN) {
+      throw new ForbiddenException('관리자만 삭제할 수 있습니다.');
+    }
 
     await this.prisma.notice.delete({
       where: { id },
